@@ -333,8 +333,6 @@ Contributions are welcome.
 4. Run `npm run check`, `npm test`, and `npm run build`.
 5. Open a pull request describing the behavior and verification performed.
 
-UI changes should follow [DESIGN.md](./DESIGN.md).
-
 ## Publishing
 
 See [GITHUB_SETUP.md](./GITHUB_SETUP.md) for repository initialization, push commands, branch protection, secret scanning, and recommended GitHub settings.
