@@ -333,10 +333,6 @@ Contributions are welcome.
 4. Run `npm run check`, `npm test`, and `npm run build`.
 5. Open a pull request describing the behavior and verification performed.
 
-## Publishing
-
-See [GITHUB_SETUP.md](./GITHUB_SETUP.md) for repository initialization, push commands, branch protection, secret scanning, and recommended GitHub settings.
-
 ## License
 
 No license has been selected yet. Add a license before publishing the repository as open source.
