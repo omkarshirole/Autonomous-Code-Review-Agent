@@ -2,6 +2,10 @@ import { createHash } from "node:crypto";
 import type { Finding, ReviewCategory, Severity } from "../shared/types.js";
 import type { AddedLine } from "./diff.js";
 
+/**
+ * Rule definition for deterministic code review checks
+ * Each rule has a regex pattern and metadata for findings
+ */
 interface Rule {
   id: string;
   pattern: RegExp;
@@ -14,15 +18,21 @@ interface Rule {
   files?: RegExp;
 }
 
+/**
+ * Deterministic security, reliability, and style rules
+ * These run without AI and catch common issues with high confidence
+ */
 const RULES: Rule[] = [
   {
     id: "secret",
-    pattern: /(api[_-]?key|secret|password|token)\s*[:=]\s*["'][A-Za-z0-9_\-/+.]{12,}["']/i,
+    pattern: /(api[_-]?key|secret|password|token)\s*[:=]\s*["'][A-Za-z0-9_\-/.]{12,}["']/i,
     severity: "critical",
     category: "security",
     title: "Possible hard-coded credential",
-    message: "This added line appears to contain a credential. Committed secrets remain recoverable from repository history.",
-    suggestion: "Load the value from a secret manager or an environment variable, then rotate the exposed credential.",
+    message:
+      "This added line appears to contain a credential. Committed secrets remain recoverable from repository history.",
+    suggestion:
+      "Load the value from a secret manager or an environment variable, then rotate the exposed credential.",
     confidence: 0.96,
   },
   {
@@ -31,8 +41,10 @@ const RULES: Rule[] = [
     severity: "high",
     category: "security",
     title: "Dynamic code execution",
-    message: "Executing dynamically constructed code can turn untrusted input into arbitrary code execution.",
-    suggestion: "Replace dynamic evaluation with an explicit parser or a constrained dispatch table.",
+    message:
+      "Executing dynamically constructed code can turn untrusted input into arbitrary code execution.",
+    suggestion:
+      "Replace dynamic evaluation with an explicit parser or a constrained dispatch table.",
     confidence: 0.94,
   },
   {
@@ -41,8 +53,10 @@ const RULES: Rule[] = [
     severity: "critical",
     category: "security",
     title: "User input may reach a shell",
-    message: "Untrusted input appears to flow into a process execution API, creating a command-injection risk.",
-    suggestion: "Use an argument array, avoid a shell, and validate values against a strict allowlist.",
+    message:
+      "Untrusted input appears to flow into a process execution API, creating a command-injection risk.",
+    suggestion:
+      "Use an argument array, avoid a shell, and validate values against a strict allowlist.",
     confidence: 0.91,
   },
   {
@@ -52,7 +66,8 @@ const RULES: Rule[] = [
     category: "security",
     title: "Query built with string interpolation",
     message: "Interpolating values into a database query can allow SQL injection.",
-    suggestion: "Use parameterized queries or your database library's query builder.",
+    suggestion:
+      "Use parameterized queries or your database library's query builder.",
     confidence: 0.89,
   },
   {
@@ -61,13 +76,16 @@ const RULES: Rule[] = [
     severity: "high",
     category: "security",
     title: "Unsanitized HTML sink",
-    message: "Rendering raw HTML can introduce cross-site scripting when any portion is user controlled.",
-    suggestion: "Render structured elements or sanitize with a well-maintained allowlist-based sanitizer.",
+    message:
+      "Rendering raw HTML can introduce cross-site scripting when any portion is user controlled.",
+    suggestion:
+      "Render structured elements or sanitize with a well-maintained allowlist-based sanitizer.",
     confidence: 0.86,
   },
   {
     id: "weak-token",
-    pattern: /Math\.random\(\).*(token|secret|session|password)|(?:token|secret|session).*=.*Math\.random\(\)/i,
+    pattern:
+      /Math\.random\(\).*(token|secret|session|password)|(?:token|secret|session).*=.*Math\.random\(\)/i,
     severity: "high",
     category: "security",
     title: "Predictable value used for security",
@@ -81,8 +99,10 @@ const RULES: Rule[] = [
     severity: "medium",
     category: "reliability",
     title: "Error is silently swallowed",
-    message: "An empty catch block hides failures and makes production incidents difficult to diagnose.",
-    suggestion: "Handle the expected error explicitly or log and rethrow unexpected failures.",
+    message:
+      "An empty catch block hides failures and makes production incidents difficult to diagnose.",
+    suggestion:
+      "Handle the expected error explicitly or log and rethrow unexpected failures.",
     confidence: 0.91,
   },
   {
@@ -91,7 +111,8 @@ const RULES: Rule[] = [
     severity: "low",
     category: "reliability",
     title: "Unchecked non-null assertion",
-    message: "A non-null assertion suppresses the type checker and may become a runtime exception.",
+    message:
+      "A non-null assertion suppresses the type checker and may become a runtime exception.",
     suggestion: "Guard the value or model the nullable state explicitly.",
     confidence: 0.72,
     files: /\.(ts|tsx)$/,
@@ -114,15 +135,32 @@ const RULES: Rule[] = [
     category: "style",
     title: "Debug logging added",
     message: "Ad-hoc console output can leak data or add noise in production.",
-    suggestion: "Remove it or use the application's structured logger at an appropriate level.",
+    suggestion:
+      "Remove it or use the application's structured logger at an appropriate level.",
     confidence: 0.77,
   },
 ];
 
+/**
+ * Generate a fingerprint for deduplication
+ * @param rule - Rule ID
+ * @param file - File path
+ * @param line - Line number
+ * @returns Short hash for deduplication
+ */
 const fingerprint = (rule: string, file: string, line: number) =>
   createHash("sha1").update(`${rule}:${file}:${line}`).digest("hex").slice(0, 12);
 
-export function runRules(lines: AddedLine[], disabledRules: string[] = []): Finding[] {
+/**
+ * Run all enabled rules against added lines in a diff
+ * @param lines - Array of added lines from parsed diff
+ * @param disabledRules - Array of rule IDs to skip
+ * @returns Array of findings from rule matches
+ */
+export function runRules(
+  lines: AddedLine[],
+  disabledRules: string[] = []
+): Finding[] {
   const findings: Finding[] = [];
   const disabled = new Set(disabledRules);
   for (const line of lines) {

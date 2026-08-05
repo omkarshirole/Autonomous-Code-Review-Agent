@@ -6,6 +6,11 @@ import { z } from "zod";
 import { createReview } from "./review.js";
 import { importGitHubSource, importZipSource } from "./sources.js";
 
+/**
+ * ReviewPilot - Automated Code Review Server
+ * Express.js backend for the ReviewPilot application
+ */
+
 const app = express();
 const port = Number(process.env.PORT || 8787);
 
@@ -22,6 +27,9 @@ app.use(
   }),
 );
 
+/**
+ * Schema for review settings validation
+ */
 const settingsSchema = z.object({
   model: z.string().trim().min(1).max(100).optional(),
   strictness: z.enum(["relaxed", "balanced", "strict"]).optional(),
@@ -29,16 +37,29 @@ const settingsSchema = z.object({
   disabledRules: z.array(z.string().trim().min(1).max(80)).max(100).optional(),
 });
 
+/**
+ * Schema for direct diff review requests
+ */
 const requestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().max(4000).optional(),
   diff: z.string().min(10).max(1_500_000),
   settings: settingsSchema.optional(),
 });
+
+/**
+ * Schema for GitHub source import requests
+ */
 const githubSchema = z.object({
   url: z.string().trim().min(10).max(1000),
   settings: settingsSchema.optional(),
 });
+
+/**
+ * Multer configuration for ZIP file uploads
+ * Limits: 12MB max, 1 file, 5 fields
+ * Only accepts .zip files
+ */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 12 * 1024 * 1024, files: 1, fields: 5 },
@@ -47,11 +68,21 @@ const upload = multer({
   },
 });
 
+/**
+ * Extract and validate OpenAI API key from request header
+ * @param request - Express request object
+ * @returns Validated API key or undefined
+ */
 const requestKey = (request: express.Request) => {
   const rawKey = request.header("x-openai-key")?.trim();
   return rawKey && rawKey.length >= 20 ? rawKey : undefined;
 };
 
+/**
+ * Sanitize error messages to redact sensitive information
+ * @param error - Error to sanitize
+ * @returns Sanitized error message
+ */
 const safeError = (error: unknown) => {
   const message = error instanceof Error ? error.message : "Review failed";
   return message
@@ -59,10 +90,17 @@ const safeError = (error: unknown) => {
     .replace(/Bearer\s+[A-Za-z0-9_.-]+/gi, "Bearer [redacted]");
 };
 
+/**
+ * Health check endpoint
+ */
 app.get("/api/health", (_request, response) => {
   response.json({ status: "ok", service: "reviewpilot" });
 });
 
+/**
+ * Create a code review from a unified diff
+ * POST /api/reviews
+ */
 app.post("/api/reviews", async (request, response) => {
   const parsed = requestSchema.safeParse(request.body);
   if (!parsed.success) {
@@ -86,65 +124,118 @@ app.post("/api/reviews", async (request, response) => {
   }
 });
 
+/**
+ * Import and review a GitHub repository/PR/commit
+ * POST /api/sources/github
+ */
 app.post("/api/sources/github", async (request, response) => {
   const parsed = githubSchema.safeParse(request.body);
   if (!parsed.success) {
-    response.status(400).json({ error: "Invalid GitHub source", details: parsed.error.issues.map((issue) => issue.message) });
+    response.status(400).json({
+      error: "Invalid GitHub source",
+      details: parsed.error.issues.map((issue) => issue.message),
+    });
     return;
   }
   const githubToken = request.header("x-github-token")?.trim();
   const apiKey = requestKey(request);
   try {
     const imported = await importGitHubSource(parsed.data.url, githubToken);
-    const review = await createReview({ ...imported, settings: parsed.data.settings }, apiKey);
+    const review = await createReview(
+      { ...imported, settings: parsed.data.settings },
+      apiKey
+    );
     response.json(review);
   } catch (error) {
-    response.status(502).json({ error: "GitHub import failed", details: safeError(error) });
+    response
+      .status(502)
+      .json({ error: "GitHub import failed", details: safeError(error) });
   }
 });
 
-app.post("/api/sources/zip", upload.single("archive"), async (request, response) => {
-  if (!request.file) {
-    response.status(400).json({ error: "ZIP file required", details: "Choose one .zip archive to review." });
-    return;
+/**
+ * Import and review a ZIP archive
+ * POST /api/sources/zip
+ */
+app.post(
+  "/api/sources/zip",
+  upload.single("archive"),
+  async (request, response) => {
+    if (!request.file) {
+      response.status(400).json({
+        error: "ZIP file required",
+        details: "Choose one .zip archive to review.",
+      });
+      return;
+    }
+    let settings: unknown;
+    try {
+      settings = request.body.settings
+        ? JSON.parse(request.body.settings)
+        : undefined;
+    } catch {
+      response.status(400).json({
+        error: "Invalid settings",
+        details: "The review settings are not valid JSON.",
+      });
+      return;
+    }
+    const parsedSettings = settingsSchema.optional().safeParse(settings);
+    if (!parsedSettings.success) {
+      response.status(400).json({
+        error: "Invalid settings",
+        details: parsedSettings.error.issues.map((issue) => issue.message),
+      });
+      return;
+    }
+    const apiKey = requestKey(request);
+    try {
+      const imported = await importZipSource(
+        request.file.buffer,
+        request.file.originalname
+      );
+      const review = await createReview(
+        { ...imported, settings: parsedSettings.data },
+        apiKey
+      );
+      response.json(review);
+    } catch (error) {
+      response
+        .status(422)
+        .json({ error: "ZIP import failed", details: safeError(error) });
+    }
   }
-  let settings: unknown;
-  try {
-    settings = request.body.settings ? JSON.parse(request.body.settings) : undefined;
-  } catch {
-    response.status(400).json({ error: "Invalid settings", details: "The review settings are not valid JSON." });
-    return;
-  }
-  const parsedSettings = settingsSchema.optional().safeParse(settings);
-  if (!parsedSettings.success) {
-    response.status(400).json({ error: "Invalid settings", details: parsedSettings.error.issues.map((issue) => issue.message) });
-    return;
-  }
-  const apiKey = requestKey(request);
-  try {
-    const imported = await importZipSource(request.file.buffer, request.file.originalname);
-    const review = await createReview({ ...imported, settings: parsedSettings.data }, apiKey);
-    response.json(review);
-  } catch (error) {
-    response.status(422).json({ error: "ZIP import failed", details: safeError(error) });
-  }
-});
+);
 
+// Serve static files in production
 app.use(express.static("dist"));
 app.get("/{*splat}", (_request, response) => {
   response.sendFile("index.html", { root: "dist" });
 });
 
-app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
-  if (error instanceof multer.MulterError) {
-    response.status(400).json({
-      error: "ZIP upload failed",
-      details: error.code === "LIMIT_FILE_SIZE" ? "The ZIP must be 12 MB or smaller." : safeError(error),
-    });
-    return;
+// Global error handler
+app.use(
+  (
+    error: unknown,
+    _request: express.Request,
+    response: express.Response,
+    _next: express.NextFunction
+  ) => {
+    if (error instanceof multer.MulterError) {
+      response.status(400).json({
+        error: "ZIP upload failed",
+        details:
+          error.code === "LIMIT_FILE_SIZE"
+            ? "The ZIP must be 12 MB or smaller."
+            : safeError(error),
+      });
+      return;
+    }
+    response
+      .status(500)
+      .json({ error: "Unexpected server error", details: safeError(error) });
   }
-  response.status(500).json({ error: "Unexpected server error", details: safeError(error) });
-});
+);
 
 app.listen(port, () => {
   console.log(`ReviewPilot listening on http://localhost:${port}`);

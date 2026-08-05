@@ -5,12 +5,23 @@ import { z } from "zod";
 import type { Finding, ReviewRequest } from "../shared/types.js";
 import type { ParsedDiff } from "./diff.js";
 
+/**
+ * Schema for AI review response
+ * Ensures structured output from the LLM
+ */
 const AiReviewSchema = z.object({
   summary: z.string(),
   findings: z.array(
     z.object({
       severity: z.enum(["critical", "high", "medium", "low", "info"]),
-      category: z.enum(["security", "bug", "performance", "reliability", "maintainability", "style"]),
+      category: z.enum([
+        "security",
+        "bug",
+        "performance",
+        "reliability",
+        "maintainability",
+        "style",
+      ]),
       file: z.string(),
       line: z.number().int().nonnegative(),
       title: z.string(),
@@ -21,13 +32,22 @@ const AiReviewSchema = z.object({
   ).max(30),
 });
 
+/**
+ * Run AI-powered code review using OpenAI Responses API
+ * @param request - The review request containing diff and settings
+ * @param parsed - Parsed diff with added lines
+ * @param apiKey - OpenAI API key for authentication
+ * @returns Promise resolving to AI review summary and findings
+ */
 export async function runAiReview(
   request: ReviewRequest,
   parsed: ParsedDiff,
-  apiKey: string,
+  apiKey: string
 ): Promise<{ summary: string; findings: Finding[]; model: string }> {
-  const model = request.settings?.model || "gpt-5.6-sol";
+  const model = request.settings?.model || "gpt-4o";
   const client = new OpenAI({ apiKey });
+  
+  // Build list of valid file:line locations for the AI to reference
   const validLocations = parsed.addedLines
     .map((line) => `${line.file}:${line.line}`)
     .join(", ");
@@ -60,6 +80,8 @@ ${request.diff}`,
 
   const review = response.output_parsed;
   if (!review) throw new Error("The model did not return a structured review.");
+  
+  // Filter findings to only include valid locations
   const valid = new Set(parsed.addedLines.map((line) => `${line.file}:${line.line}`));
   const findings = review.findings
     .filter((finding) => valid.has(`${finding.file}:${finding.line}`))
@@ -75,5 +97,6 @@ ${request.diff}`,
         fingerprint: fp,
       };
     });
+  
   return { summary: review.summary, findings, model };
 }
